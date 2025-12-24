@@ -1,17 +1,15 @@
 #include <iostream>
-#include <iomanip>
 #include <string>
 #include <ctime>
 #include <vector>
+#include <map>
 #include <cstdlib>
 
 using namespace std;
 
-/* 解析 YYYYMMDDhhmmss (UTC) */
 time_t parse_utc(const string& s) {
-    if (s.size() != 14) {
+    if (s.size() != 14)
         throw runtime_error("Invalid time format");
-    }
 
     tm t{};
     t.tm_year = stoi(s.substr(0, 4)) - 1900;
@@ -22,80 +20,147 @@ time_t parse_utc(const string& s) {
     t.tm_sec  = stoi(s.substr(12, 2));
     t.tm_isdst = 0;
 
-    // 强制按 UTC 解释
     return timegm(&t);
+}
+
+tm to_tm(time_t t) {
+    tm out{};
+    gmtime_r(&t, &out);
+    return out;
+}
+
+bool add_year(tm& t) {
+    tm tmp = t;
+    tmp.tm_year += 1;
+    time_t nt = timegm(&tmp);
+    if (nt == -1) return false;
+    t = tmp;
+    return true;
+}
+
+bool add_month(tm& t) {
+    tm tmp = t;
+    tmp.tm_mon += 1;
+    time_t nt = timegm(&tmp);
+    if (nt == -1) return false;
+    t = tmp;
+    return true;
 }
 
 int main(int argc, char* argv[]) {
     bool reverse = false;
+    bool show_all = false;
+    string unit_only;
     vector<string> args;
 
     for (int i = 1; i < argc; ++i) {
         string a = argv[i];
-        if (a == "-r") {
-            reverse = true;
+        if (a == "-r") reverse = true;
+        else if (a == "-a" || a == "--all") show_all = true;
+        else if (a == "-u" || a == "--unit") {
+            if (i + 1 >= argc) {
+                cerr << "-u requires a unit\n";
+                return 1;
+            }
+            unit_only = argv[++i];
         } else {
             args.push_back(a);
         }
     }
 
     if (args.empty() || args.size() > 2) {
-        cerr << "Usage: timediff [-r] <time1> [time2]\n";
+        cerr << "Usage: timediff [-r] [-a|--all] [-u unit] <time1> [time2]\n";
         return 1;
     }
 
-    try {
-        time_t t1 = parse_utc(args[0]);
-        time_t t2;
+    time_t t1 = parse_utc(args[0]);
+    time_t t2 = (args.size() == 2) ? parse_utc(args[1]) : time(nullptr);
 
-        if (args.size() == 2) {
-            t2 = parse_utc(args[1]);
-        } else {
-            t2 = time(nullptr); // 当前 UTC
-        }
+    long long diff = t2 - t1;
+    if (reverse) diff = -diff;
 
-        long long diff = static_cast<long long>(t2 - t1);
-        if (reverse) diff = -diff;
+    char sign = diff >= 0 ? '+' : '-';
+    long long abs_sec = llabs(diff);
 
-        char sign = (diff >= 0) ? '+' : '-';
-        long long seconds = llabs(diff);
+    constexpr long long SEC_MIN  = 60;
+    constexpr long long SEC_HOUR = 3600;
+    constexpr long long SEC_DAY  = 86400;
+    constexpr long long SEC_WEEK = 604800;
 
-        constexpr long long SEC_MIN  = 60;
-        constexpr long long SEC_HOUR = 60 * 60;
-        constexpr long long SEC_DAY  = 24 * SEC_HOUR;
-        constexpr long long SEC_WEEK = 7 * SEC_DAY;
-        constexpr long long SEC_MONTH = 30 * SEC_DAY;
-        constexpr long long SEC_YEAR  = 365 * SEC_DAY;
-
-        long long years  = seconds / SEC_YEAR;  seconds %= SEC_YEAR;
-        long long months = seconds / SEC_MONTH; seconds %= SEC_MONTH;
-        long long weeks  = seconds / SEC_WEEK;  seconds %= SEC_WEEK;
-        long long days   = seconds / SEC_DAY;   seconds %= SEC_DAY;
-        long long hours  = seconds / SEC_HOUR;  seconds %= SEC_HOUR;
-        long long mins   = seconds / SEC_MIN;   seconds %= SEC_MIN;
-        long long secs   = seconds;
-
-        cout << sign;
-
-        auto print_unit = [](long long v, const char* name) {
-            if (v > 0)
-                cout << v << " " << name << (v > 1 ? "s " : " ");
+    /* ---------- unit-only ---------- */
+    if (!unit_only.empty()) {
+        map<string, long long> units = {
+            {"seconds", abs_sec},
+            {"minutes", abs_sec / SEC_MIN},
+            {"hours",   abs_sec / SEC_HOUR},
+            {"days",    abs_sec / SEC_DAY},
+            {"weeks",   abs_sec / SEC_WEEK}
         };
 
-        print_unit(years,  "year");
-        print_unit(months, "month");
-        print_unit(weeks,  "week");
-        print_unit(days,   "day");
-        print_unit(hours,  "hour");
-        print_unit(mins,   "minute");
-        print_unit(secs,   "second");
+        if (!units.count(unit_only)) {
+            cerr << "Unsupported unit\n";
+            return 1;
+        }
 
-        cout << "\n";
-
-    } catch (const exception& e) {
-        cerr << "Error: " << e.what() << "\n";
-        return 1;
+        cout << sign << units[unit_only] << "\n";
+        return 0;
     }
+
+    /* ---------- all-units ---------- */
+    if (show_all) {
+        cout << sign << "\n";
+        cout << "Seconds: " << abs_sec << "\n";
+        cout << "Minutes: " << abs_sec / SEC_MIN << "\n";
+        cout << "Hours:   " << abs_sec / SEC_HOUR << "\n";
+        cout << "Days:    " << abs_sec / SEC_DAY << "\n";
+        cout << "Weeks:   " << abs_sec / SEC_WEEK << "\n";
+        return 0;
+    }
+
+    /* ---------- mixed calendar diff ---------- */
+    time_t start = (diff >= 0) ? t1 : t2;
+    time_t end   = (diff >= 0) ? t2 : t1;
+
+    tm cur = to_tm(start);
+    time_t cur_t = start;
+
+    long long years = 0, months = 0;
+
+    while (true) {
+        tm tmp = cur;
+        if (!add_year(tmp)) break;
+        time_t nt = timegm(&tmp);
+        if (nt > end) break;
+        cur = tmp;
+        cur_t = nt;
+        years++;
+    }
+
+    while (true) {
+        tm tmp = cur;
+        if (!add_month(tmp)) break;
+        time_t nt = timegm(&tmp);
+        if (nt > end) break;
+        cur = tmp;
+        cur_t = nt;
+        months++;
+    }
+
+    long long remain = llabs(end - cur_t);
+
+    long long days  = remain / SEC_DAY;   remain %= SEC_DAY;
+    long long hours = remain / SEC_HOUR;  remain %= SEC_HOUR;
+    long long mins  = remain / SEC_MIN;   remain %= SEC_MIN;
+    long long secs  = remain;
+
+    cout << sign;
+    if (years)  cout << years  << " year"  << (years  > 1 ? "s " : " ");
+    if (months) cout << months << " month" << (months > 1 ? "s " : " ");
+    if (days)   cout << days   << " day"   << (days   > 1 ? "s " : " ");
+    if (hours)  cout << hours  << " hour"  << (hours  > 1 ? "s " : " ");
+    if (mins)   cout << mins   << " minute"<< (mins   > 1 ? "s " : " ");
+    if (secs)   cout << secs   << " second"<< (secs   > 1 ? "s " : " ");
+    cout << "\n";
 
     return 0;
 }
