@@ -114,7 +114,7 @@ int main(int argc, char* argv[]) {
         cout << "Hours:   " << abs_sec / SEC_HOUR << "\n";
         cout << "Days:    " << abs_sec / SEC_DAY << "\n";
         cout << "Weeks:   " << abs_sec / SEC_WEEK << "\n";
-        return 0;
+        // return 0;
     }
 
     /* ---------- mixed calendar diff ---------- */
